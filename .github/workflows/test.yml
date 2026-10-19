@@ -17,10 +17,13 @@ jobs:
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.17.0
 
       - name: Zig version
         run: zig version
 
+      - name: Check formatting
+        run: zig fmt --check src examples build.zig
+
       - name: Build and test
-        run: zig build test
+        run: zig build test && zig build
