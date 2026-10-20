@@ -14,6 +14,7 @@ const std = @import("std");
 const client = @import("client.zig");
 pub const models = @import("models.zig");
 pub const validators = @import("validators.zig");
+pub const webhooks = @import("webhooks.zig");
 
 pub const Client = client.Client;
 pub const Config = client.Config;
@@ -33,6 +34,9 @@ pub const Subscriptions = @import("subscriptions.zig").Subscriptions;
 pub const Cards = @import("cards.zig").Cards;
 pub const Marketplace = @import("marketplace.zig").Marketplace;
 
+/// A decoded callback; verify it first with `webhooks.verify`.
+pub const WebhookEvent = webhooks.Event;
+
 // Request and response types, also available as `tapsilat.models.*`
 pub const Order = models.Order;
 pub const CreateOrderRequest = models.CreateOrderRequest;
@@ -47,6 +51,7 @@ pub const Currency = models.Currency;
 pub const Locale = models.Locale;
 pub const BillingType = models.BillingType;
 pub const PaymentOption = models.PaymentOption;
+pub const OrderStatusCode = models.OrderStatusCode;
 
 test {
     // Analyze every public function, including those the tests do not call
@@ -62,6 +67,10 @@ test {
     std.testing.refAllDecls(Cards);
     std.testing.refAllDecls(Marketplace);
     std.testing.refAllDecls(validators);
+    std.testing.refAllDecls(webhooks);
+    std.testing.refAllDecls(webhooks.Event);
+    std.testing.refAllDecls(OrderStatusCode);
+    std.testing.refAllDecls(models.OrderStatus);
     std.testing.refAllDecls(@import("transport.zig").HttpTransport);
     _ = @import("tests.zig");
 }

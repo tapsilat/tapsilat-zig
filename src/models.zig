@@ -333,9 +333,145 @@ pub const OrderRefundCancelRequest = struct {
     created_at: ?[]const u8 = null,
 };
 
+/// The response of `Orders.getStatus`: `status` is a name such as "Waiting for payment".
 pub const OrderStatus = struct {
     status: ?[]const u8 = null,
     @"error": ?[]const u8 = null,
+
+    /// The status as an `OrderStatusCode`, or null when it is missing or unknown.
+    pub fn code(self: OrderStatus) ?OrderStatusCode {
+        return OrderStatusCode.parse(self.status orelse return null);
+    }
+};
+
+/// The numeric order status that order details and callbacks carry, with the names
+/// `Orders.getStatus` returns for them.
+pub const OrderStatusCode = enum(u8) {
+    received = 1,
+    unpaid = 2,
+    paid = 3,
+    processing = 4,
+    shipped = 5,
+    on_hold = 6,
+    waiting_for_payment = 7,
+    cancelled = 8,
+    completed = 9,
+    refunded = 10,
+    fraud = 11,
+    rejected = 12,
+    failure = 13,
+    retrying = 14,
+    partially_refunded = 15,
+    sub_merchant_payment_approved = 16,
+    sub_merchant_payment_disapproved = 17,
+    sub_merchant_payment_errored = 18,
+    still_has_unpaid_installments = 19,
+    still_has_unpaid_terms = 20,
+    expired = 21,
+    still_has_unpaid_sub_merchant_payments = 22,
+    partially_paid = 23,
+    terminated = 24,
+    card_tokenization = 25,
+    pre_authorized = 26,
+    disputed = 27,
+    partially_disputed = 28,
+    suspect = 29,
+
+    /// Statuses of an order whose payment was captured.
+    pub const paid_statuses = [_]OrderStatusCode{ .paid, .completed, .sub_merchant_payment_approved };
+    /// Statuses of an order that will not be paid.
+    pub const failed_statuses = [_]OrderStatusCode{ .cancelled, .fraud, .rejected, .failure, .expired, .terminated };
+    /// Statuses of an order whose payment was refunded in full or in part.
+    pub const refunded_statuses = [_]OrderStatusCode{ .refunded, .partially_refunded };
+
+    pub fn code(self: OrderStatusCode) u8 {
+        return @backingInt(self);
+    }
+
+    /// The name `Orders.getStatus` returns, such as "Paid".
+    pub fn name(self: OrderStatusCode) []const u8 {
+        return switch (self) {
+            .received => "Received",
+            .unpaid => "Unpaid",
+            .paid => "Paid",
+            .processing => "Processing",
+            .shipped => "Shipped",
+            .on_hold => "On hold",
+            .waiting_for_payment => "Waiting for payment",
+            .cancelled => "Cancelled",
+            .completed => "Completed",
+            .refunded => "Refunded",
+            .fraud => "Fraud",
+            .rejected => "Rejected",
+            .failure => "Failure",
+            .retrying => "Retrying",
+            .partially_refunded => "Partially refunded",
+            .sub_merchant_payment_approved => "Sub merchant payment approved",
+            .sub_merchant_payment_disapproved => "Sub merchant payment disapproved",
+            .sub_merchant_payment_errored => "Sub merchant payment errored",
+            .still_has_unpaid_installments => "Still has unpaid installments",
+            .still_has_unpaid_terms => "Still has unpaid terms",
+            .expired => "Expired",
+            .still_has_unpaid_sub_merchant_payments => "Still has unpaid sub merchant payments",
+            .partially_paid => "Partially Paid",
+            .terminated => "Terminated",
+            .card_tokenization => "Card Tokenization",
+            .pre_authorized => "Pre Authorized",
+            .disputed => "Disputed",
+            .partially_disputed => "Partially disputed",
+            .suspect => "Suspect",
+        };
+    }
+
+    /// The status with the given numeric code, or null when it is not a status.
+    pub fn fromCode(value: i64) ?OrderStatusCode {
+        return std.enums.fromInt(OrderStatusCode, value);
+    }
+
+    /// Reads a numeric code such as "3", as order_lite callbacks send it, or a status name such
+    /// as "Paid" (case-insensitive). Returns null when the text is not a status.
+    pub fn parse(text: []const u8) ?OrderStatusCode {
+        const trimmed = std.mem.trim(u8, text, " \t\n\r\x00\x0b");
+        if (trimmed.len > 0 and isDigits(trimmed)) {
+            return fromCode(std.fmt.parseInt(i64, trimmed, 10) catch return null);
+        }
+        for (std.enums.values(OrderStatusCode)) |status| {
+            if (std.ascii.eqlIgnoreCase(status.name(), trimmed)) return status;
+        }
+        return null;
+    }
+
+    /// Reads a decoded JSON status: a number such as 3 or 3.0, or text as `parse` accepts.
+    pub fn fromJson(value: std.json.Value) ?OrderStatusCode {
+        return switch (value) {
+            .integer => |number| fromCode(number),
+            .float => |number| if (@floor(number) == number and number >= 0 and number <= std.math.maxInt(u8))
+                fromCode(@intFromFloat(number))
+            else
+                null,
+            .string, .number_string => |text| parse(text),
+            else => null,
+        };
+    }
+
+    pub fn isPaid(self: OrderStatusCode) bool {
+        return std.mem.findScalar(OrderStatusCode, &paid_statuses, self) != null;
+    }
+
+    pub fn isFailed(self: OrderStatusCode) bool {
+        return std.mem.findScalar(OrderStatusCode, &failed_statuses, self) != null;
+    }
+
+    pub fn isRefunded(self: OrderStatusCode) bool {
+        return std.mem.findScalar(OrderStatusCode, &refunded_statuses, self) != null;
+    }
+
+    fn isDigits(text: []const u8) bool {
+        for (text) |c| {
+            if (!std.ascii.isDigit(c)) return false;
+        }
+        return true;
+    }
 };
 
 pub const RefundOrder = struct {
