@@ -138,6 +138,66 @@ try client.marketplace().createApprovalPolicy(.{ .name = "Large orders", .min_am
 Currency references are otherwise sent as given; the server resolves units. Use
 `client.resolveCurrencyId(allocator, "TRY")` where a UUID is required.
 
+### Webhooks
+
+Tapsilat signs every callback it sends to your callback URLs, and to an order's
+`payment_success_url` and `payment_failure_url`, with the webhook secret from the panel's callback
+settings. The `Tapsilat-Signature` header (`tapsilat.webhooks.signature_header`) looks like
+`t=1726480000,v1=3e0039…`: `v1` is the hex HMAC-SHA256 of the timestamp, a dot and the raw body.
+
+`tapsilat.webhooks.verify` checks it in constant time and rejects a timestamp more than 5 minutes
+from the current time, so a captured callback cannot be replayed. Pass the raw body, not
+re-encoded JSON.
+
+```zig
+/// `body` is the raw request body and `signature` the Tapsilat-Signature header.
+fn handleCallback(gpa: std.mem.Allocator, io: std.Io, body: []const u8, signature: []const u8) !std.http.Status {
+    if (!tapsilat.webhooks.verifyNow(io, body, signature, "your_webhook_secret")) return .bad_request;
+
+    const event = try tapsilat.WebhookEvent.parse(gpa, body);
+    defer event.deinit();
+    // event.value.type: "order_lite" (the default), "order", "order_payment_detail", ...
+    // event.value.reference_id: the order's reference ID, whatever the callback type
+    // event.value.conversation_id, and event.value.statusName(): "Paid", when the type carries a status
+
+    if (event.value.isPaid()) {
+        // fulfil the order
+    }
+    return .ok;
+}
+```
+
+`verifyNow` reads the time from `io`'s real-time clock. `verify` takes the time and, optionally,
+a different tolerance in seconds (`0` disables the timestamp check):
+
+```zig
+const valid = tapsilat.webhooks.verify(body, signature, secret, .{
+    .now = std.Io.Clock.real.now(io).toSeconds(),
+    .tolerance_seconds = 600,
+});
+```
+
+A bare hex HMAC-SHA256 of the body, with or without a `sha256=` prefix, is still accepted for
+signatures made the way earlier SDK versions documented.
+
+### Order statuses
+
+`tapsilat.OrderStatusCode` has the numeric status codes that callbacks and order details carry, the
+names `client.orders().getStatus` returns, and the groups most integrations need:
+
+```zig
+const status = try client.orders().getStatus("reference-id");
+defer status.deinit();
+if (status.value.code()) |code| { // e.g. .waiting_for_payment; code.code() is 7, code.name() "Waiting for payment"
+    if (code.isPaid()) {} // Paid, Completed, Sub merchant payment approved
+    if (code.isFailed()) {} // Cancelled, Fraud, Rejected, Failure, Expired, Terminated
+    if (code.isRefunded()) {} // Refunded, Partially refunded
+}
+```
+
+`OrderStatusCode.parse` accepts a code as text ("7") or a name in any case, `fromCode` a number
+and `fromJson` a decoded JSON value.
+
 ### Errors
 
 A call that gets an error status, or a response that is not JSON (such as an HTML page from a
@@ -196,6 +256,7 @@ tapsilat-zig/
 │   ├── orders.zig, cards.zig, organization.zig, submerchants.zig,
 │   │   vpos.zig, subscriptions.zig, marketplace.zig
 │   ├── validators.zig
+│   ├── webhooks.zig       # Callback signature verification and decoding
 │   └── tests.zig          # Contract tests with a fake transport
 ├── examples/
 │   └── create_order.zig
