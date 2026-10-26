@@ -1,6 +1,6 @@
 .{
     .name = .tapsilat,
-    .version = "0.1.0",
+    .version = "0.2.0",
     .fingerprint = 0xf9c4f582d5a55946,
     .minimum_zig_version = "0.17.0",
     .paths = .{
