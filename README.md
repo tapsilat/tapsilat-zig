@@ -95,6 +95,7 @@ Services are reached through accessors on the client:
 | `client.vpos()` | Virtual POS, acquirers, card schemes, templates and VPOS submerchants |
 | `client.subscriptions()` | Subscriptions |
 | `client.marketplace()` | Marketplace sellers, payouts, payout operations and policies (API v2) |
+| `client.elements()` | Tapsilat Elements sessions for the native card sheet: create, get and cancel |
 
 ```zig
 const order = try client.orders().get("reference-id");
@@ -137,6 +138,50 @@ try client.marketplace().createApprovalPolicy(.{ .name = "Large orders", .min_am
 
 Currency references are otherwise sent as given; the server resolves units. Use
 `client.resolveCurrencyId(allocator, "TRY")` where a UUID is required.
+
+### Tapsilat Elements sessions
+
+Tapsilat Elements is the native Android and iOS card sheet. Your backend creates a session with
+its secret API key and passes only the session's `client_secret` to the app, which opens the sheet
+with it. Card data goes from the sheet to Tapsilat encrypted and never reaches your backend.
+
+```zig
+const created = try client.elements().createSession(.{
+    .purpose = @tagName(tapsilat.ElementsPurpose.pay),
+    .order_reference_id = "reference-id",
+    .save_card = true,
+});
+defer created.deinit();
+// Return created.value.id and created.value.client_secret to your app. Do not log or store the secret.
+
+// Later, read the outcome on your backend instead of trusting the app
+const outcome = try client.elements().getSession(session_id);
+defer outcome.deinit();
+if (outcome.value.knownStatus() == .succeeded) {
+    // fulfil the order; outcome.value.card has the brand, last4 and expiry
+}
+```
+
+| Call | Route | Returns |
+|---|---|---|
+| `client.elements().createSession(request)` | `POST /elements/sessions` | `ElementsSessionWithSecret` |
+| `client.elements().getSession(id)` | `GET /elements/sessions/{id}` | `ElementsSession` |
+| `client.elements().cancelSession(id)` | `POST /elements/sessions/{id}/cancel` | `ElementsSession` |
+
+A `pay` session needs `order_reference_id`. A `tokenize` session saves a card for `user_id`, with
+`mode` set to `ElementsMode.secure.code()` (3D Secure), `.half_secure` or `.non_secure`.
+`cancelSession` cancels a session that is still waiting for a card; a session that is confirming
+or has completed comes back unchanged.
+
+`status`, `purpose` and the card `brand` are kept as text, so values added later still decode.
+`knownStatus()`, `knownPurpose()` and `knownBrand()` return them as `ElementsStatus`,
+`ElementsPurpose` and `ElementsCardBrand`, or null for a value this SDK version does not know.
+
+Only `createSession` returns the client secret. Formatting an `ElementsSessionWithSecret` with
+`{f}` writes it as `[redacted]`, and `.session()` returns the session without it, while
+`std.json.Stringify` keeps it so you can send it to the app. Do not print the type with `{any}`,
+which writes every field. Elements errors carry a stable `code` (for example
+`elements_not_enabled` or `session_not_found`) and `retryable` in `client.last_api_error`.
 
 ### Webhooks
 
@@ -202,10 +247,14 @@ and `fromJson` a decoded JSON value.
 
 A call that gets an error status, or a response that is not JSON (such as an HTML page from a
 wrong `base_url`), returns `error.ApiError` and leaves the details in `client.last_api_error`:
-`status_code`, `status`, `code`, `message`, `errors_json` (per-field validation messages) and
-`raw_body`. The client frees them on the next request or on `deinit`. Format the error with
-`{f}` for the common message, for example
+`status_code`, `status`, `code`, `message`, `errors_json` (per-field validation messages),
+`retryable` and `raw_body`. The client frees them on the next request or on `deinit`. Format the
+error with `{f}` for the common message, for example
 `API request failed with status 400 (Bad Request): [400000] INVALID_REQUEST_BODY`.
+
+Elements routes nest the error as `{"error": {"code": "...", "message": "...", "retryable": true}}`;
+`code`, `message` and `retryable` are read from that object. `retryable` is true only when the
+error says the request can be retried, as a 503 `unavailable` does.
 
 ### Timeouts and redirects
 
@@ -254,7 +303,7 @@ tapsilat-zig/
 │   ├── errors.zig         # ApiError
 │   ├── models.zig         # Request and response types
 │   ├── orders.zig, cards.zig, organization.zig, submerchants.zig,
-│   │   vpos.zig, subscriptions.zig, marketplace.zig
+│   │   vpos.zig, subscriptions.zig, marketplace.zig, elements.zig
 │   ├── validators.zig
 │   ├── webhooks.zig       # Callback signature verification and decoding
 │   └── tests.zig          # Contract tests with a fake transport
