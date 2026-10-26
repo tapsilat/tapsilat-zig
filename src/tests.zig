@@ -431,7 +431,7 @@ test "validation errors expose the code and field errors" {
     try testing.expectEqualStrings("API request failed with status 400 (Bad Request): [400000] INVALID_REQUEST_BODY", text);
 }
 
-test "gRPC errors use the error field" {
+test "an error string with a numeric code is parsed" {
     var fake = Fake.init(testing.allocator);
     defer fake.deinit();
     var client = fake.client();
