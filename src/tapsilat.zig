@@ -33,6 +33,7 @@ pub const Vpos = @import("vpos.zig").Vpos;
 pub const Subscriptions = @import("subscriptions.zig").Subscriptions;
 pub const Cards = @import("cards.zig").Cards;
 pub const Marketplace = @import("marketplace.zig").Marketplace;
+pub const Elements = @import("elements.zig").Elements;
 
 /// A decoded callback; verify it first with `webhooks.verify`.
 pub const WebhookEvent = webhooks.Event;
@@ -52,6 +53,15 @@ pub const Locale = models.Locale;
 pub const BillingType = models.BillingType;
 pub const PaymentOption = models.PaymentOption;
 pub const OrderStatusCode = models.OrderStatusCode;
+pub const ElementsSessionCreateRequest = models.ElementsSessionCreateRequest;
+pub const ElementsSession = models.ElementsSession;
+pub const ElementsSessionWithSecret = models.ElementsSessionWithSecret;
+pub const ElementsCardSummary = models.ElementsCardSummary;
+pub const ElementsError = models.ElementsError;
+pub const ElementsPurpose = models.ElementsPurpose;
+pub const ElementsStatus = models.ElementsStatus;
+pub const ElementsMode = models.ElementsMode;
+pub const ElementsCardBrand = models.ElementsCardBrand;
 
 test {
     // Analyze every public function, including those the tests do not call
@@ -66,11 +76,19 @@ test {
     std.testing.refAllDecls(Subscriptions);
     std.testing.refAllDecls(Cards);
     std.testing.refAllDecls(Marketplace);
+    std.testing.refAllDecls(Elements);
     std.testing.refAllDecls(validators);
     std.testing.refAllDecls(webhooks);
     std.testing.refAllDecls(webhooks.Event);
     std.testing.refAllDecls(OrderStatusCode);
     std.testing.refAllDecls(models.OrderStatus);
+    std.testing.refAllDecls(ElementsSession);
+    std.testing.refAllDecls(ElementsSessionWithSecret);
+    std.testing.refAllDecls(ElementsCardSummary);
+    std.testing.refAllDecls(ElementsPurpose);
+    std.testing.refAllDecls(ElementsStatus);
+    std.testing.refAllDecls(ElementsMode);
+    std.testing.refAllDecls(ElementsCardBrand);
     std.testing.refAllDecls(@import("transport.zig").HttpTransport);
     _ = @import("tests.zig");
 }

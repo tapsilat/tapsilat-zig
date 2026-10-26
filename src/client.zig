@@ -14,6 +14,7 @@ const VposService = @import("vpos.zig").Vpos;
 const Subscriptions = @import("subscriptions.zig").Subscriptions;
 const Cards = @import("cards.zig").Cards;
 const Marketplace = @import("marketplace.zig").Marketplace;
+const Elements = @import("elements.zig").Elements;
 
 pub const ApiError = errors.ApiError;
 pub const Transport = transport_mod.Transport;
@@ -95,6 +96,11 @@ pub const Client = struct {
 
     /// Marketplace sellers, payouts and policies (API v2).
     pub fn marketplace(self: *Client) Marketplace {
+        return .{ .client = self };
+    }
+
+    /// Tapsilat Elements sessions for the native Android and iOS card sheet.
+    pub fn elements(self: *Client) Elements {
         return .{ .client = self };
     }
 

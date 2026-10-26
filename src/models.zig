@@ -1684,6 +1684,212 @@ pub const MarketplaceReleasePolicyInput = struct {
 pub const MarketplaceApprovalSettings = struct {
     default_mode: ?[]const u8 = null,
 };
+
+/// The request of `Elements.createSession`. Required: `purpose`, and `order_reference_id` for a
+/// "pay" session.
+pub const ElementsSessionCreateRequest = struct {
+    /// "tokenize" or "pay", such as `@tagName(ElementsPurpose.pay)`.
+    purpose: []const u8,
+    /// The order the session pays; required for "pay".
+    order_reference_id: ?[]const u8 = null,
+    /// The card owner of a "tokenize" session, scoped to your organization.
+    user_id: ?[]const u8 = null,
+    user_email: ?[]const u8 = null,
+    /// The tokenize mode, such as `ElementsMode.secure.code()`: 1 = 3D Secure, 2 = half secure,
+    /// 3 = non-secure.
+    mode: ?i64 = null,
+    /// "pay": lets the buyer save the card.
+    save_card: ?bool = null,
+};
+
+/// The state of an Elements session, as `Elements.getSession` and `Elements.cancelSession` return
+/// it. Timestamps are RFC 3339 text, such as "2026-10-22T09:30:00Z".
+pub const ElementsSession = struct {
+    id: ?[]const u8 = null,
+    /// "tokenize" or "pay"; see `knownPurpose`.
+    purpose: ?[]const u8 = null,
+    /// Such as "requires_payment_method" or "succeeded"; see `knownStatus`.
+    status: ?[]const u8 = null,
+    order_reference_id: ?[]const u8 = null,
+    user_id: ?[]const u8 = null,
+    attempts: ?i64 = null,
+    max_attempts: ?i64 = null,
+    created_at: ?[]const u8 = null,
+    expires_at: ?[]const u8 = null,
+    completed_at: ?[]const u8 = null,
+    /// The card the buyer entered, once there is one.
+    card: ?ElementsCardSummary = null,
+    /// Why the last attempt failed.
+    last_error: ?ElementsError = null,
+
+    /// The status as an `ElementsStatus`, or null when it is missing or unknown to this SDK.
+    pub fn knownStatus(self: ElementsSession) ?ElementsStatus {
+        return ElementsStatus.parse(self.status orelse return null);
+    }
+
+    /// The purpose as an `ElementsPurpose`, or null when it is missing or unknown to this SDK.
+    pub fn knownPurpose(self: ElementsSession) ?ElementsPurpose {
+        return ElementsPurpose.parse(self.purpose orelse return null);
+    }
+};
+
+/// A newly created Elements session: the `ElementsSession` fields plus the client secret.
+///
+/// Hand `client_secret` to the app that opens the card sheet; only `Elements.createSession`
+/// returns it. Do not log or store it. Formatting with `{f}` writes it as `[redacted]`, while
+/// `std.json.Stringify` keeps it so you can send it to the app. `{any}` prints every field, the
+/// secret included, so do not use it on this type.
+pub const ElementsSessionWithSecret = struct {
+    id: ?[]const u8 = null,
+    purpose: ?[]const u8 = null,
+    status: ?[]const u8 = null,
+    order_reference_id: ?[]const u8 = null,
+    user_id: ?[]const u8 = null,
+    attempts: ?i64 = null,
+    max_attempts: ?i64 = null,
+    created_at: ?[]const u8 = null,
+    expires_at: ?[]const u8 = null,
+    completed_at: ?[]const u8 = null,
+    card: ?ElementsCardSummary = null,
+    last_error: ?ElementsError = null,
+    /// The secret the app opens the card sheet with.
+    client_secret: ?[]const u8 = null,
+    /// The Elements host for this session, such as "https://checkout.tapsilat.dev".
+    elements_base_url: ?[]const u8 = null,
+
+    /// The session without its client secret.
+    pub fn session(self: ElementsSessionWithSecret) ElementsSession {
+        var result: ElementsSession = .{};
+        inline for (@typeInfo(ElementsSession).@"struct".field_names) |name| {
+            @field(result, name) = @field(self, name);
+        }
+        return result;
+    }
+
+    /// Writes the fields that are set, like `{any}` with quoted strings, and the client secret
+    /// as `[redacted]`.
+    pub fn format(self: ElementsSessionWithSecret, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writeRedacted(writer, self, "client_secret");
+    }
+};
+
+pub const ElementsCardSummary = struct {
+    id: ?[]const u8 = null,
+    /// Such as "visa" or "troy"; see `knownBrand`.
+    brand: ?[]const u8 = null,
+    last4: ?[]const u8 = null,
+    exp_month: ?i64 = null,
+    exp_year: ?i64 = null,
+
+    /// The brand as an `ElementsCardBrand`, or null when it is missing or unknown to this SDK.
+    pub fn knownBrand(self: ElementsCardSummary) ?ElementsCardBrand {
+        return ElementsCardBrand.parse(self.brand orelse return null);
+    }
+};
+
+/// An Elements error object, as a session's `last_error` carries it.
+pub const ElementsError = struct {
+    /// A stable code such as "card_declined" or "attempts_exhausted".
+    code: ?[]const u8 = null,
+    message: ?[]const u8 = null,
+    retryable: ?bool = null,
+};
+
+/// Purposes of an Elements session. Requests take the purpose as text, such as
+/// `@tagName(ElementsPurpose.pay)`.
+pub const ElementsPurpose = enum {
+    /// Save a card for `user_id`.
+    tokenize,
+    /// Pay an order.
+    pay,
+
+    /// Returns the purpose named `text`, or null when it is not one this SDK knows.
+    pub fn parse(text: []const u8) ?ElementsPurpose {
+        return std.meta.stringToEnum(ElementsPurpose, text);
+    }
+};
+
+/// Statuses of an Elements session.
+pub const ElementsStatus = enum {
+    requires_payment_method,
+    processing,
+    requires_action,
+    succeeded,
+    failed,
+    expired,
+    canceled,
+
+    /// Returns the status named `text`, or null when it is not one this SDK knows.
+    pub fn parse(text: []const u8) ?ElementsStatus {
+        return std.meta.stringToEnum(ElementsStatus, text);
+    }
+};
+
+/// Tokenize modes of an Elements session. Requests take the number, such as
+/// `ElementsMode.secure.code()`.
+pub const ElementsMode = enum(i64) {
+    /// 3D Secure.
+    secure = 1,
+    half_secure = 2,
+    non_secure = 3,
+
+    pub fn code(self: ElementsMode) i64 {
+        return @backingInt(self);
+    }
+};
+
+/// Card brands an Elements session reports.
+pub const ElementsCardBrand = enum {
+    visa,
+    mastercard,
+    amex,
+    troy,
+    discover,
+    unionpay,
+    unknown,
+
+    /// Returns the brand named `text`, or null when it is not one this SDK knows.
+    pub fn parse(text: []const u8) ?ElementsCardBrand {
+        return std.meta.stringToEnum(ElementsCardBrand, text);
+    }
+};
+
+/// Writes a struct like `{any}` does, but with strings quoted, null fields left out and the field
+/// named `redacted` written as `[redacted]`.
+fn writeRedacted(writer: *std.Io.Writer, value: anytype, comptime redacted: []const u8) std.Io.Writer.Error!void {
+    switch (@typeInfo(@TypeOf(value))) {
+        .@"struct" => |info| {
+            try writer.writeAll(".{");
+            var first = true;
+            inline for (info.field_names) |name| {
+                const field = @field(value, name);
+                if (!isNull(field)) {
+                    try writer.writeAll(if (first) " ." else ", .");
+                    first = false;
+                    try writer.writeAll(name);
+                    try writer.writeAll(" = ");
+                    if (comptime std.mem.eql(u8, name, redacted)) {
+                        try writer.writeAll("[redacted]");
+                    } else {
+                        try writeRedacted(writer, field, "");
+                    }
+                }
+            }
+            try writer.writeAll(if (first) "}" else " }");
+        },
+        .optional => if (value) |inner| try writeRedacted(writer, inner, redacted) else try writer.writeAll("null"),
+        .pointer => try writer.print("\"{f}\"", .{std.zig.fmtString(value)}),
+        else => try writer.print("{any}", .{value}),
+    }
+}
+
+fn isNull(value: anytype) bool {
+    return switch (@typeInfo(@TypeOf(value))) {
+        .optional => value == null,
+        else => false,
+    };
+}
+
 /// The order-create request; see `Order`.
 pub const CreateOrderRequest = Order;
 

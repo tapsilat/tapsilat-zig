@@ -9,16 +9,20 @@ pub const ApiError = struct {
     status_code: u16,
     /// The body's `status` field, else the HTTP reason phrase.
     status: []u8,
-    /// The body's `code` field as text, such as "400000".
+    /// The body's `code` field as text, such as "400000", or the code of a nested `error`
+    /// object, such as "session_not_found".
     code: ?[]u8 = null,
-    /// The body's `message` field, else its `error` field.
+    /// The body's `message` field, else its `error` field or the message of a nested `error` object.
     message: ?[]u8 = null,
     /// The body's `errors` object (per-field validation messages) as JSON text.
     errors_json: ?[]u8 = null,
+    /// True when a nested `error` object says the request can be retried, as Elements errors do.
+    retryable: bool = false,
     raw_body: []u8,
 
-    /// Builds the error from an error response body such as `{"error":"...","code":5}` or
-    /// `{"message":"INVALID_REQUEST_BODY","code":400000,"errors":{...}}`.
+    /// Builds the error from an error response body such as `{"error":"...","code":5}`,
+    /// `{"message":"INVALID_REQUEST_BODY","code":400000,"errors":{...}}` or, on Elements routes,
+    /// `{"error":{"code":"session_not_found","message":"...","retryable":false}}`.
     pub fn fromBody(allocator: Allocator, status_code: u16, body: []const u8) Allocator.Error!ApiError {
         var result: ApiError = .{
             .status_code = status_code,
@@ -39,11 +43,28 @@ pub const ApiError = struct {
             }
         }
         if (payload.get("code")) |value| result.code = try text(allocator, value);
-        if (payload.get("message") orelse payload.get("error")) |value| result.message = try text(allocator, value);
+        if (payload.get("message")) |value| {
+            result.message = try text(allocator, value);
+        } else if (payload.get("error")) |value| {
+            if (value == .object) {
+                try result.readNested(allocator, value.object);
+            } else {
+                result.message = try text(allocator, value);
+            }
+        }
         if (payload.get("errors")) |value| {
             if (value == .object) result.errors_json = try std.json.Stringify.valueAlloc(allocator, value, .{});
         }
         return result;
+    }
+
+    /// Reads a nested error object: `{"code": "...", "message": "...", "retryable": true}`.
+    fn readNested(self: *ApiError, allocator: Allocator, nested: std.json.ObjectMap) Allocator.Error!void {
+        if (self.code == null) {
+            if (nested.get("code")) |value| self.code = try text(allocator, value);
+        }
+        if (nested.get("message")) |value| self.message = try text(allocator, value);
+        if (nested.get("retryable")) |value| self.retryable = value == .bool and value.bool;
     }
 
     /// Builds the error for a response that is not JSON, such as the panel's HTML page.

@@ -473,3 +473,281 @@ test "versioned base URL" {
     defer testing.allocator.free(appended);
     try testing.expectEqualStrings("https://panel.example/api/v2", appended);
 }
+
+test "elements createSession posts a pay session and decodes the client secret" {
+    var fake = Fake.init(testing.allocator);
+    defer fake.deinit();
+    var client = fake.client();
+    defer client.deinit();
+    try fake.on(.POST, "/api/v1/elements/sessions", .{ .body =
+        \\{"id":"es_test_8Kq2nV0rX4","purpose":"pay","status":"requires_payment_method","order_reference_id":"order-ref-1",
+        \\ "attempts":0,"max_attempts":3,"created_at":"2026-10-22T09:00:00Z","expires_at":"2026-10-22T09:30:00Z",
+        \\ "client_secret":"es_test_8Kq2nV0rX4_secret_q8Zr0bM1","elements_base_url":"https://checkout.tapsilat.dev"}
+    });
+
+    const session = try client.elements().createSession(.{
+        .purpose = @tagName(tapsilat.ElementsPurpose.pay),
+        .order_reference_id = "order-ref-1",
+        .save_card = true,
+    });
+    defer session.deinit();
+
+    const sent = fake.last(.POST, "/api/v1/elements/sessions").?;
+    try testing.expectEqualStrings("Bearer test-key", sent.authorization);
+    try testing.expectEqualStrings("{\"purpose\":\"pay\",\"order_reference_id\":\"order-ref-1\",\"save_card\":true}", sent.body.?);
+
+    const value = session.value;
+    try testing.expectEqualStrings("es_test_8Kq2nV0rX4", value.id.?);
+    try testing.expectEqualStrings("pay", value.purpose.?);
+    try testing.expectEqualStrings("requires_payment_method", value.status.?);
+    try testing.expectEqual(tapsilat.ElementsStatus.requires_payment_method, value.session().knownStatus().?);
+    try testing.expectEqual(tapsilat.ElementsPurpose.pay, value.session().knownPurpose().?);
+    try testing.expectEqualStrings("order-ref-1", value.order_reference_id.?);
+    try testing.expectEqual(@as(i64, 0), value.attempts.?);
+    try testing.expectEqual(@as(i64, 3), value.max_attempts.?);
+    try testing.expectEqualStrings("2026-10-22T09:00:00Z", value.created_at.?);
+    try testing.expectEqualStrings("2026-10-22T09:30:00Z", value.expires_at.?);
+    try testing.expect(value.completed_at == null);
+    try testing.expect(value.card == null);
+    try testing.expect(value.last_error == null);
+    try testing.expectEqualStrings("es_test_8Kq2nV0rX4_secret_q8Zr0bM1", value.client_secret.?);
+    try testing.expectEqualStrings("https://checkout.tapsilat.dev", value.elements_base_url.?);
+}
+
+test "elements createSession sends a tokenize session's owner and mode" {
+    var fake = Fake.init(testing.allocator);
+    defer fake.deinit();
+    var client = fake.client();
+    defer client.deinit();
+    try fake.on(.POST, "/api/v1/elements/sessions", .{ .body = "{\"id\":\"es_test_1\",\"purpose\":\"tokenize\",\"status\":\"requires_payment_method\",\"user_id\":\"user_123\",\"client_secret\":\"es_test_1_secret_x\"}" });
+
+    const session = try client.elements().createSession(.{
+        .purpose = @tagName(tapsilat.ElementsPurpose.tokenize),
+        .user_id = "user_123",
+        .user_email = "john@doe.com",
+        .mode = tapsilat.ElementsMode.non_secure.code(),
+    });
+    defer session.deinit();
+
+    try testing.expectEqualStrings(
+        "{\"purpose\":\"tokenize\",\"user_id\":\"user_123\",\"user_email\":\"john@doe.com\",\"mode\":3}",
+        fake.last(.POST, "/api/v1/elements/sessions").?.body.?,
+    );
+    try testing.expectEqualStrings("user_123", session.value.user_id.?);
+    try testing.expectEqualStrings("es_test_1_secret_x", session.value.client_secret.?);
+    try testing.expectEqual(tapsilat.ElementsPurpose.tokenize, session.value.session().knownPurpose().?);
+    try testing.expectEqual(@as(i64, 1), tapsilat.ElementsMode.secure.code());
+    try testing.expectEqual(@as(i64, 2), tapsilat.ElementsMode.half_secure.code());
+}
+
+test "elements getSession decodes the card and the last error" {
+    var fake = Fake.init(testing.allocator);
+    defer fake.deinit();
+    var client = fake.client();
+    defer client.deinit();
+    try fake.on(.GET, "/api/v1/elements/sessions/es_test_8Kq2nV0rX4", .{ .body =
+        \\{"id":"es_test_8Kq2nV0rX4","purpose":"pay","status":"failed","order_reference_id":"order-ref-1",
+        \\ "attempts":3,"max_attempts":3,"completed_at":"2026-10-22T09:12:00Z",
+        \\ "card":{"id":"card-1","brand":"visa","last4":"4242","exp_month":12,"exp_year":2030},
+        \\ "last_error":{"code":"card_declined","message":"The card was declined.","retryable":false}}
+    });
+
+    const session = try client.elements().getSession("es_test_8Kq2nV0rX4");
+    defer session.deinit();
+
+    const sent = fake.last(.GET, "/api/v1/elements/sessions/es_test_8Kq2nV0rX4").?;
+    try testing.expectEqualStrings("Bearer test-key", sent.authorization);
+    try testing.expect(sent.body == null);
+
+    const value = session.value;
+    try testing.expectEqual(tapsilat.ElementsStatus.failed, value.knownStatus().?);
+    try testing.expectEqual(@as(i64, 3), value.attempts.?);
+    try testing.expectEqualStrings("2026-10-22T09:12:00Z", value.completed_at.?);
+    const card = value.card.?;
+    try testing.expectEqualStrings("card-1", card.id.?);
+    try testing.expectEqualStrings("visa", card.brand.?);
+    try testing.expectEqual(tapsilat.ElementsCardBrand.visa, card.knownBrand().?);
+    try testing.expectEqualStrings("4242", card.last4.?);
+    try testing.expectEqual(@as(i64, 12), card.exp_month.?);
+    try testing.expectEqual(@as(i64, 2030), card.exp_year.?);
+    const last_error = value.last_error.?;
+    try testing.expectEqualStrings("card_declined", last_error.code.?);
+    try testing.expectEqualStrings("The card was declined.", last_error.message.?);
+    try testing.expect(!last_error.retryable.?);
+}
+
+test "elements getSession reads a null card and error, and values it does not know" {
+    var fake = Fake.init(testing.allocator);
+    defer fake.deinit();
+    var client = fake.client();
+    defer client.deinit();
+    try fake.on(.GET, "/api/v1/elements/sessions/es_mock_1", .{ .body = "{\"id\":\"es_mock_1\",\"purpose\":\"pay\",\"status\":\"requires_payment_method\",\"card\":null,\"last_error\":null}" });
+    try fake.on(.GET, "/api/v1/elements/sessions/es_mock_2", .{ .body =
+        \\{"id":"es_mock_2","purpose":"subscribe","status":"under_review","created_at":"22/10/2026",
+        \\ "card":{"brand":"elo","last4":"0005","network":"elo"},"risk":{"score":12}}
+    });
+
+    const empty = try client.elements().getSession("es_mock_1");
+    defer empty.deinit();
+    try testing.expect(empty.value.card == null);
+    try testing.expect(empty.value.last_error == null);
+
+    const future = try client.elements().getSession("es_mock_2");
+    defer future.deinit();
+    try testing.expectEqualStrings("under_review", future.value.status.?);
+    try testing.expect(future.value.knownStatus() == null);
+    try testing.expectEqualStrings("subscribe", future.value.purpose.?);
+    try testing.expect(future.value.knownPurpose() == null);
+    try testing.expectEqualStrings("22/10/2026", future.value.created_at.?);
+    try testing.expectEqualStrings("elo", future.value.card.?.brand.?);
+    try testing.expect(future.value.card.?.knownBrand() == null);
+}
+
+test "elements cancelSession posts no body" {
+    var fake = Fake.init(testing.allocator);
+    defer fake.deinit();
+    var client = fake.client();
+    defer client.deinit();
+    try fake.on(.POST, "/api/v1/elements/sessions/es_test_8Kq2nV0rX4/cancel", .{ .body = "{\"id\":\"es_test_8Kq2nV0rX4\",\"purpose\":\"pay\",\"status\":\"canceled\",\"attempts\":0,\"max_attempts\":3}" });
+
+    const session = try client.elements().cancelSession("es_test_8Kq2nV0rX4");
+    defer session.deinit();
+
+    const sent = fake.last(.POST, "/api/v1/elements/sessions/es_test_8Kq2nV0rX4/cancel").?;
+    try testing.expectEqualStrings("Bearer test-key", sent.authorization);
+    try testing.expect(sent.body == null);
+    try testing.expectEqual(tapsilat.ElementsStatus.canceled, session.value.knownStatus().?);
+}
+
+test "elements session IDs are escaped in the path" {
+    var fake = Fake.init(testing.allocator);
+    defer fake.deinit();
+    var client = fake.client();
+    defer client.deinit();
+    try fake.on(.GET, "/api/v1/elements/sessions/es_test_1%2F..%2Fx", .{ .body = "{\"id\":\"es_test_1\"}" });
+    try fake.on(.POST, "/api/v1/elements/sessions/es_test_1%3Fa%3D1/cancel", .{ .body = "{\"id\":\"es_test_1\"}" });
+
+    (try client.elements().getSession("es_test_1/../x")).deinit();
+    (try client.elements().cancelSession("es_test_1?a=1")).deinit();
+
+    try testing.expect(fake.last(.GET, "/api/v1/elements/sessions/es_test_1%2F..%2Fx") != null);
+    try testing.expectEqualStrings("", fake.last(.POST, "/api/v1/elements/sessions/es_test_1%3Fa%3D1/cancel").?.query);
+}
+
+const ElementsCall = enum { create, get, cancel };
+
+fn callElements(client: *tapsilat.Client, call: ElementsCall) !void {
+    switch (call) {
+        .create => (try client.elements().createSession(.{ .purpose = "pay", .order_reference_id = "order-ref-1" })).deinit(),
+        .get => (try client.elements().getSession("es_test_missing")).deinit(),
+        .cancel => (try client.elements().cancelSession("es_test_1")).deinit(),
+    }
+}
+
+test "elements errors expose the nested code, message and retryable flag" {
+    const Case = struct {
+        call: ElementsCall,
+        method: std.http.Method,
+        path: []const u8,
+        status: u16,
+        body: []const u8,
+        code: []const u8,
+        message: []const u8,
+        retryable: bool,
+        formatted: []const u8,
+    };
+    const cases = [_]Case{
+        .{
+            .call = .create,
+            .method = .POST,
+            .path = "/api/v1/elements/sessions",
+            .status = 403,
+            .body = "{\"error\":{\"code\":\"elements_not_enabled\",\"message\":\"Elements is not enabled for this organization\"}}",
+            .code = "elements_not_enabled",
+            .message = "Elements is not enabled for this organization",
+            .retryable = false,
+            .formatted = "API request failed with status 403 (Forbidden): [elements_not_enabled] Elements is not enabled for this organization",
+        },
+        .{
+            .call = .get,
+            .method = .GET,
+            .path = "/api/v1/elements/sessions/es_test_missing",
+            .status = 404,
+            .body = "{\"error\":{\"code\":\"session_not_found\",\"message\":\"session not found\",\"retryable\":false}}",
+            .code = "session_not_found",
+            .message = "session not found",
+            .retryable = false,
+            .formatted = "API request failed with status 404 (Not Found): [session_not_found] session not found",
+        },
+        .{
+            .call = .cancel,
+            .method = .POST,
+            .path = "/api/v1/elements/sessions/es_test_1/cancel",
+            .status = 503,
+            .body = "{\"error\":{\"code\":\"unavailable\",\"message\":\"try again\",\"retryable\":true}}",
+            .code = "unavailable",
+            .message = "try again",
+            .retryable = true,
+            .formatted = "API request failed with status 503 (Service Unavailable): [unavailable] try again",
+        },
+    };
+
+    for (cases) |case| {
+        var fake = Fake.init(testing.allocator);
+        defer fake.deinit();
+        var client = fake.client();
+        defer client.deinit();
+        try fake.on(case.method, case.path, .{ .status = case.status, .body = case.body });
+
+        try testing.expectError(error.ApiError, callElements(&client, case.call));
+        const api_error = client.last_api_error.?;
+        try testing.expectEqual(case.status, api_error.status_code);
+        try testing.expectEqualStrings(case.code, api_error.code.?);
+        try testing.expectEqualStrings(case.message, api_error.message.?);
+        try testing.expectEqual(case.retryable, api_error.retryable);
+
+        var buffer: [200]u8 = undefined;
+        try testing.expectEqualStrings(case.formatted, try std.fmt.bufPrint(&buffer, "{f}", .{api_error}));
+    }
+}
+
+test "top-level error shapes are not retryable" {
+    var fake = Fake.init(testing.allocator);
+    defer fake.deinit();
+    var client = fake.client();
+    defer client.deinit();
+    try fake.on(.GET, "/api/v1/order/ref-1/status", .{ .status = 503, .body = "{\"error\":\"unavailable\",\"code\":14,\"retryable\":true}" });
+
+    try testing.expectError(error.ApiError, client.orders().getStatus("ref-1"));
+    try testing.expectEqualStrings("14", client.last_api_error.?.code.?);
+    try testing.expectEqualStrings("unavailable", client.last_api_error.?.message.?);
+    try testing.expect(!client.last_api_error.?.retryable);
+}
+
+test "a created elements session redacts its client secret when formatted" {
+    const session: tapsilat.ElementsSessionWithSecret = .{
+        .id = "es_test_1",
+        .status = "requires_payment_method",
+        .card = .{ .brand = "visa", .last4 = "4242" },
+        .client_secret = "es_test_1_secret_x",
+        .elements_base_url = "https://checkout.tapsilat.dev",
+    };
+
+    var buffer: [512]u8 = undefined;
+    const printed = try std.fmt.bufPrint(&buffer, "{f}", .{session});
+    try testing.expectEqualStrings(
+        ".{ .id = \"es_test_1\", .status = \"requires_payment_method\", .card = .{ .brand = \"visa\", .last4 = \"4242\" }, " ++
+            ".client_secret = [redacted], .elements_base_url = \"https://checkout.tapsilat.dev\" }",
+        printed,
+    );
+    try testing.expect(std.mem.find(u8, printed, "secret_x") == null);
+
+    const encoded = try std.json.Stringify.valueAlloc(testing.allocator, session, .{ .emit_null_optional_fields = false });
+    defer testing.allocator.free(encoded);
+    try testing.expect(std.mem.find(u8, encoded, "\"client_secret\":\"es_test_1_secret_x\"") != null);
+
+    const without_secret = session.session();
+    try testing.expectEqualStrings("es_test_1", without_secret.id.?);
+    try testing.expectEqualStrings("4242", without_secret.card.?.last4.?);
+    try testing.expect(!@hasField(tapsilat.ElementsSession, "client_secret"));
+}
